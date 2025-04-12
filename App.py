@@ -11,10 +11,10 @@ CORS(app)
 encoded = os.getenv("FIREBASE_CREDENTIALS_B64")
 decoded = base64.b64decode(encoded).decode("utf-8")
 firebase_config = json.loads(decoded)
-
+firebase_url=os.getenv("FIREBASE_URL")
 cred = credentials.Certificate(firebase_config)
 firebase_admin.initialize_app(cred, {
-    'databaseURL': 'https://ambuclear-ee248-default-rtdb.firebaseio.com/' 
+    'databaseURL':firebase_url
 })
 
 @app.route('/location', methods=['POST'])
