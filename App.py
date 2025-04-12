@@ -1,27 +1,18 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import firebase_admin
-from firebase_admin import credentials, db
-import os
+from firebase_admin import credentials, db, initialize_app
+import os, json, base64
 
 app = Flask(__name__)
 CORS(app)
 
-service_account_dict = {
-    "type": "service_account",
-    "project_id": os.getenv("FIREBASE_PROJECT_ID"),
-    "private_key_id": os.getenv("FIREBASE_PRIVATE_KEY_ID"),
-    "private_key": os.getenv("FIREBASE_PRIVATE_KEY").replace('\\n', '\n'),
-    "client_email": os.getenv("FIREBASE_CLIENT_EMAIL"),
-    "client_id": os.getenv("FIREBASE_CLIENT_ID"),
-    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-    "token_uri": "https://oauth2.googleapis.com/token",
-    "auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs",
-    "client_x509_cert_url": os.getenv("FIREBASE_CLIENT_CERT_URL"),
-    "universe_domain": "googleapis.com"
-}
+# Read env variable (Render or .env file)
+encoded = os.getenv("FIREBASE_CREDENTIALS_B64")
+decoded = base64.b64decode(encoded).decode("utf-8")
+firebase_config = json.loads(decoded)
 
-cred = credentials.Certificate(service_account_dict)
+cred = credentials.Certificate(firebase_config)
 firebase_admin.initialize_app(cred, {
     'databaseURL': 'https://ambuclear-ee248-default-rtdb.firebaseio.com/' 
 })
