@@ -3,3 +3,4 @@ requests
 socketio
 flask-cors
 firebase-admin
+gunicorn
