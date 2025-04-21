@@ -25,82 +25,83 @@ firebase_admin.initialize_app(cred, {
     'databaseURL': os.getenv("FIREBASE_DB_URL")
 })
 
-queue = []
-active_timers = {} 
+TIMEOUT_DURATION = 540000  # 9 minutes in milliseconds
 
-TIMEOUT_DURATION = 540000
+user_queues = {}
+active_timers = {}
 
-def revert_to_stop(name, esp32_id):
-    print(f"Timeout reached for {name}. Reverting status to 'stop'")
+def revert_to_stop(name, esp32_id, user_id):
+    print(f"[Timeout] Reverting {name} to stop for user {user_id}")
     try:
-        if name in queue:
-            queue.remove(name)
-        ref = db.reference(f'/locations/{name}/{esp32_id}')
-        ref.set({
-            'status': 'stop'
-        })
+        if user_id in user_queues and name in user_queues[user_id]:
+            user_queues[user_id].remove(name)
+        ref = db.reference(f'/locations/{name}/{esp32_id}/{user_id}')
+        ref.set({'status': 'stop'})
     except Exception as e:
         print(f"Error reverting status: {e}")
 
 @app.route('/location', methods=['POST'])
 def location():
-    global queue, active_timers
     try:
         data = request.get_json(force=True)
-        print(f"Received location data: {data}")
-        print(queue)
+        print(f"Received: {data}")
+
+        user_id = data.get('user_id')
         esp32_id = data.get('esp32_id')
         name = data.get('name')
-        status = data.get('status')  
+        status = data.get('status')
 
-        if not all([esp32_id, name, status]):
+        if not all([user_id, esp32_id, name, status]):
             return jsonify({"status": "failure", "error": "Missing required fields"}), 400
 
-        # Handle status
+        if user_id not in user_queues:
+            user_queues[user_id] = []
+
         if status == "start":
-            if name not in queue:
-                queue.append(name)
-                
+            if name not in user_queues[user_id]:
+                user_queues[user_id].append(name)
 
-            # Cancel existing timer if any
-            if name in active_timers:
-                active_timers[name].cancel()
+            timer_key = f"{user_id}_{name}"
+            if timer_key in active_timers:
+                active_timers[timer_key].cancel()
 
-            # Start a new timer
-            timer = threading.Timer(TIMEOUT_DURATION, revert_to_stop, args=(name, esp32_id))
+            timer = threading.Timer(TIMEOUT_DURATION / 1000, revert_to_stop, args=(name, esp32_id, user_id))
             timer.start()
-            active_timers[name] = timer
+            active_timers[timer_key] = timer
 
         elif status == "stop":
-            if name in queue:
-                queue.remove(name)
+            if name in user_queues[user_id]:
+                user_queues[user_id].remove(name)
 
-            # Cancel the timer
-            if name in active_timers:
-                active_timers[name].cancel()
-                del active_timers[name]
+            timer_key = f"{user_id}_{name}"
+            if timer_key in active_timers:
+                active_timers[timer_key].cancel()
+                del active_timers[timer_key]
 
-        # Update Firebase
-        ref = db.reference(f'/locations/{name}/{esp32_id}')
-        ref.set({
-            'status': status
-        })
+        ref = db.reference(f'/locations/{name}/{esp32_id}/{user_id}')
+        ref.set({'status': status})
 
         return jsonify({
             "status": "success",
-            "esp32_id": esp32_id,
+            "user_id": user_id,
             "name": name,
             "status": status
         })
 
     except Exception as e:
         return jsonify({"status": "failure", "error": str(e)}), 500
+
 @app.route('/queue', methods=['GET'])
 def get_queue():
+    user_id = request.args.get('user_id')
+    if not user_id:
+        return jsonify({"status": "failure", "error": "Missing user_id"}), 400
+
+    queue = user_queues.get(user_id, [])
     return jsonify({
         "status": "success",
         "queue": queue
     })
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host='0.0.0.0', port=5000)
