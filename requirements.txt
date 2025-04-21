@@ -5,4 +5,3 @@ flask-cors
 firebase-admin
 gunicorn
 dotenv
-threading
