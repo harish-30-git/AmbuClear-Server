@@ -9,90 +9,121 @@ from dotenv import load_dotenv
 import threading
 from time import time
 
+# Load environment variables
 load_dotenv()
+
 app = Flask(__name__)
 CORS(app)
 
+# Firebase initialization
 firebase_creds_b64 = os.getenv("FIREBASE_CONFIG_BASE64")
 if not firebase_creds_b64:
     raise ValueError("Missing FIREBASE_CONFIG_BASE64 in .env")
 
 decoded_creds = base64.b64decode(firebase_creds_b64).decode('utf-8')
 firebase_creds = json.loads(decoded_creds)
+
 cred = credentials.Certificate(firebase_creds)
 firebase_admin.initialize_app(cred, {
     'databaseURL': os.getenv("FIREBASE_DB_URL")
 })
 
 # Globals
-user_queues = {}  # user_id -> list of locations
-active_timers = {}  # user_id -> { name -> timer }
-TIMEOUT_DURATION = 9 * 60
+queue = []
+active_timers = {}
 
-def revert_to_stop(user_id, name, esp32_id):
-    print(f"[{user_id}] Timeout for {name} -> STOP")
-    user_queues[user_id] = [item for item in user_queues[user_id] if item["name"] != name]
-    ref = db.reference(f'/locations/{name}/{esp32_id}')
-    ref.set({ 'status': 'stop' })
-    if name in active_timers[user_id]:
-        del active_timers[user_id][name]
+# Timeout duration in seconds (9 minutes)
+TIMEOUT_DURATION = 9 * 60  # 540 seconds
 
-@app.route("/location", methods=["POST"])
-def handle_location():
-    data = request.get_json(force=True)
-    user_id = data.get("user_id")
-    esp32_id = data.get("esp32_id")
-    name = data.get("name")
-    status = data.get("status")
+# Revert location status to 'stop' after timeout
+def revert_to_stop(name, esp32_id):
+    print(f"Timeout reached for {name}. Reverting status to 'stop'")
+    try:
+        global queue, active_timers
+        queue = [item for item in queue if item["name"] != name]
 
-    if not all([user_id, esp32_id, name, status]):
-        return jsonify({"status": "failure", "error": "Missing data"}), 400
+        ref = db.reference(f'/locations/{name}/{esp32_id}')
+        ref.set({
+            'status': 'stop'
+        })
 
-    if user_id not in user_queues:
-        user_queues[user_id] = []
-        active_timers[user_id] = {}
+        if name in active_timers:
+            del active_timers[name]
 
-    if status == "start":
-        if not any(loc["name"] == name for loc in user_queues[user_id]):
-            user_queues[user_id].append({
-                "name": name,
-                "esp32_id": esp32_id,
-                "added_at": time()
-            })
+    except Exception as e:
+        print(f"Error reverting status: {e}")
 
-        # Cancel existing timer
-        if name in active_timers[user_id]:
-            active_timers[user_id][name].cancel()
+# Location update endpoint
+@app.route('/location', methods=['POST'])
+def location():
+    global queue, active_timers
+    try:
+        data = request.get_json(force=True)
+        print(f"Received location data: {data}")
+        esp32_id = data.get('esp32_id')
+        name = data.get('name')
+        status = data.get('status')
 
-        timer = threading.Timer(TIMEOUT_DURATION, revert_to_stop, args=(user_id, name, esp32_id))
-        timer.start()
-        active_timers[user_id][name] = timer
+        if not all([esp32_id, name, status]):
+            return jsonify({"status": "failure", "error": "Missing required fields"}), 400
 
-    elif status == "stop":
-        user_queues[user_id] = [item for item in user_queues[user_id] if item["name"] != name]
-        if name in active_timers[user_id]:
-            active_timers[user_id][name].cancel()
-            del active_timers[user_id][name]
+        # Handle 'start' status
+        if status == "start":
+            if not any(item["name"] == name for item in queue):
+                queue.append({
+                    "name": name,
+                    "esp32_id": esp32_id,
+                    "added_at": time()
+                })
 
-    ref = db.reference(f'/locations/{name}/{esp32_id}')
-    ref.set({ 'status': status })
+            # Cancel existing timer if any
+            if name in active_timers:
+                active_timers[name].cancel()
 
-    return jsonify({
-        "status": "success",
-        "user_id": user_id,
-        "name": name,
-        "status": status
-    })
+            # Start a new timer
+            timer = threading.Timer(TIMEOUT_DURATION, revert_to_stop, args=(name, esp32_id))
+            timer.start()
+            active_timers[name] = timer
 
-@app.route("/queue", methods=["POST"])
-def get_user_queue():
-    data = request.get_json(force=True)
-    user_id = data.get("user_id")
-    if not user_id or user_id not in user_queues:
-        return jsonify({ "status": "success", "queue": [] })
+        # Handle 'stop' status
+        elif status == "stop":
+            queue = [item for item in queue if item["name"] != name]
 
-    queue_names = [item["name"] for item in user_queues[user_id]]
-    return jsonify({ "status": "success", "queue": queue_names })
+            # Cancel and remove the timer
+            if name in active_timers:
+                active_timers[name].cancel()
+                del active_timers[name]
 
-if __name__ == "__main__":
+        # Update Firebase
+        ref = db.reference(f'/locations/{name}/{esp32_id}')
+        ref.set({
+            'status': status
+        })
+
+        return jsonify({
+            "status": "success",
+            "esp32_id": esp32_id,
+            "name": name,
+            "status": status
+        })
+
+    except Exception as e:
+        return jsonify({"status": "failure", "error": str(e)}), 500
+
+# Endpoint to get current queue (only names)
+@app.route('/queue', methods=['GET'])
+def get_queue():
+    try:
+        formatted_queue = [item["name"] for item in queue]
+
+        return jsonify({
+            "status": "success",
+            "queue": formatted_queue
+        })
+
+    except Exception as e:
+        return jsonify({"status": "failure", "error": str(e)}), 500
+
+# Run the Flask app
+if __name__ == '__main__':
     app.run(debug=True)
