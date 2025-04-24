@@ -25,7 +25,7 @@ firebase_admin.initialize_app(cred, {
     'databaseURL': os.getenv("FIREBASE_DB_URL")
 })
 
-TIMEOUT_DURATION = 540000  # 9 minutes in milliseconds
+TIMEOUT_DURATION = 60000  # 1 minutes in milliseconds
 
 user_queues = {}
 active_timers = {}
