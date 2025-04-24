@@ -25,7 +25,7 @@ firebase_admin.initialize_app(cred, {
     'databaseURL': os.getenv("FIREBASE_DB_URL")
 })
 
-TIMEOUT_DURATION = 60000  # 1 minutes in milliseconds
+TIMEOUT_DURATION = 120000  # 1 minutes in milliseconds
 
 user_queues = {}
 active_timers = {}
@@ -36,7 +36,7 @@ def revert_to_stop(name, esp32_id, user_id):
         if user_id in user_queues and name in user_queues[user_id]:
             user_queues[user_id].remove(name)
         ref = db.reference(f'/locations/{name}/{esp32_id}/{user_id}')
-        ref.set({'status': 'stop'})
+        ref.set({'status': 'stp'})
     except Exception as e:
         print(f"Error reverting status: {e}")
 
